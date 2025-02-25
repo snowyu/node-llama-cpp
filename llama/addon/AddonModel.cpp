@@ -1,12 +1,17 @@
+#include <thread>
 #include <sstream>
 #include "addonGlobals.h"
 #include "globals/addonLog.h"
 #include "globals/addonProgress.h"
 #include "common/common.h"
 #include "llama.h"
+#include "json-schema-to-grammar.h"
+#include "sampling.h"
 #include "AddonModel.h"
 #include "AddonModelData.h"
 #include "AddonModelLora.h"
+
+using json = nlohmann::ordered_json;
 
 static Napi::Value getNapiToken(const Napi::CallbackInfo& info, const llama_vocab* vocab, llama_token token) {
     if (token < 0 || token == LLAMA_TOKEN_NULL) {
@@ -418,6 +423,265 @@ Napi::Value AddonModel::Dispose(const Napi::CallbackInfo& info) {
     }
 }
 
+Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
+    if (disposed) {
+        Napi::Error::New(info.Env(), "Model is disposed").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    llama_context_params context_params = llama_context_default_params();
+    context_params.n_ctx = 4096;
+    context_params.n_threads = std::max(cpu_get_num_math(), 1);
+    context_params.n_threads_batch = context_params.n_threads;
+    context_params.no_perf = true;
+
+    std::string prompt = info[0].As<Napi::String>().Utf8Value();
+    // find the number of tokens in the prompt
+    const int n_prompt = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, true, true);
+
+    // allocate space for the tokens and tokenize the prompt
+    std::vector<llama_token> prompt_tokens(n_prompt);
+    if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
+        Napi::Error::New(info.Env(), "Failed to tokenize the prompt").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    Napi::Object options;
+    if (info.Length() > 1 && info[1].IsObject()) {
+        options = info[1].As<Napi::Object>();
+    }
+
+    if (options.IsObject()) {
+        if (options.Has("contextSize")) {
+            context_params.n_ctx = options.Get("contextSize").As<Napi::Number>().Uint32Value();
+        }
+
+        if (options.Has("batchSize")) {
+            context_params.n_batch = options.Get("batchSize").As<Napi::Number>().Uint32Value();
+            // context_params.n_ubatch = context_params.n_batch; // the batch queue is managed in the JS side, so there's no need for managing it on the C++ side
+        }
+
+        if (options.Has("sequences")) {
+            context_params.n_seq_max = options.Get("sequences").As<Napi::Number>().Uint32Value();
+        }
+
+        if (options.Has("embeddings")) {
+            context_params.embeddings = options.Get("embeddings").As<Napi::Boolean>().Value();
+        }
+
+        if (options.Has("ranking") && options.Get("ranking").As<Napi::Boolean>().Value()) {
+            context_params.pooling_type = LLAMA_POOLING_TYPE_RANK;
+        }
+
+        if (options.Has("flashAttention")) {
+            context_params.flash_attn = options.Get("flashAttention").As<Napi::Boolean>().Value();
+        }
+
+        if (options.Has("threads")) {
+            const auto n_threads = options.Get("threads").As<Napi::Number>().Int32Value();
+            const auto resolved_n_threads = n_threads == 0 ? std::max((int32_t)std::thread::hardware_concurrency(), context_params.n_threads) : n_threads;
+
+            context_params.n_threads = resolved_n_threads;
+            context_params.n_threads_batch = resolved_n_threads;
+        }
+
+        if (options.Has("performanceTracking")) {
+            context_params.no_perf = !(options.Get("performanceTracking").As<Napi::Boolean>().Value());
+        }
+    }
+    llama_context * ctx = llama_init_from_model(model, context_params);
+    if (ctx == NULL) {
+        Napi::Error::New(info.Env(), "Failed to create the llama_context").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    common_params_sampling sparams;
+    if (options.IsObject()) {
+        if (options.Has("seed")) {
+            sparams.seed = options.Get("seed").As<Napi::Number>().Uint32Value();
+        }
+        if (options.Has("temperature")) {
+            sparams.temp = options.Get("temperature").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("ignoreEOS")) {
+            sparams.ignore_eos = options.Get("ignoreEOS").As<Napi::Number>().FloatValue();
+        }
+
+        if (options.Has("topK")) {
+            sparams.top_k = options.Get("topK").As<Napi::Number>().Uint32Value();
+        }
+        if (options.Has("topP")) {
+            sparams.top_p = options.Get("topP").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("minP")) {
+            sparams.min_p = options.Get("minP").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("topNSigma")) {
+            sparams.top_n_sigma = options.Get("topNSigma").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("xtcProbability")) {
+            sparams.xtc_probability = options.Get("xtcProbability").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("xtcThreshold")) {
+            sparams.xtc_threshold = options.Get("xtcThreshold").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("typicalP")) {
+            sparams.typ_p = options.Get("typicalP").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("repeatLastN")) {
+            int value = options.Get("repeatLastN").As<Napi::Number>().Int32Value();
+            if (value < -1) {
+                value = -1;
+            }
+            sparams.penalty_last_n = value;
+            sparams.n_prev = std::max(sparams.n_prev, value);
+        }
+        if (options.Has("repeatPenalty")) {
+            sparams.penalty_repeat = options.Get("repeatPenalty").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("presencePenalty")) {
+            sparams.penalty_present = options.Get("presencePenalty").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("frequencyPenalty")) {
+            sparams.penalty_freq = options.Get("frequencyPenalty").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("dryMultiplier")) {
+            sparams.dry_multiplier = options.Get("dryMultiplier").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("dryBase")) {
+            sparams.dry_base = options.Get("dryBase").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("dryAllowedLength")) {
+            sparams.dry_allowed_length = options.Get("dryAllowedLength").As<Napi::Number>().Uint32Value();
+        }
+        if (options.Has("dryPenaltyLastN")) {
+            sparams.dry_penalty_last_n = options.Get("dryPenaltyLastN").As<Napi::Number>().Uint32Value();
+        }
+        if (options.Has("drySequenceBreaker")) {
+            auto drySequenceBreakerValue = options.Get("drySequenceBreaker");
+            if (drySequenceBreakerValue.IsString()) {
+                const std::string& drySequenceBreaker = drySequenceBreakerValue.As<Napi::String>().Utf8Value();
+                sparams.dry_sequence_breakers.clear();
+                if (drySequenceBreaker.length() > 0) {
+                    sparams.dry_sequence_breakers.emplace_back(drySequenceBreaker);
+                }
+            } else if (drySequenceBreakerValue.IsArray()) {
+                auto drySequenceBreakerArray = drySequenceBreakerValue.As<Napi::Array>();
+                sparams.dry_sequence_breakers.clear();
+                for (uint32_t i = 0; i < drySequenceBreakerArray.Length(); i++) {
+                    const std::string& drySequenceBreaker = drySequenceBreakerArray.Get(i).As<Napi::String>().Utf8Value();
+                    if (drySequenceBreaker.length() > 0) {
+                        sparams.dry_sequence_breakers.emplace_back(drySequenceBreaker);
+                    }
+                }
+            } else if (drySequenceBreakerValue.IsNull() || drySequenceBreakerValue.ToBoolean().Value() == false) {
+                sparams.dry_sequence_breakers.clear();
+            }
+        }
+        if (options.Has("dynaTemperatureRange")) {
+            sparams.dynatemp_range = options.Get("dynaTemperatureRange").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("dynaTemperatureExponent")) {
+            sparams.dynatemp_exponent = options.Get("dynaTemperatureExponent").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("mirostat")) {
+            sparams.mirostat = options.Get("mirostat").As<Napi::Number>().Uint32Value();
+        }
+        if (options.Has("mirostatLearningRate")) {
+            sparams.mirostat_eta = options.Get("mirostatLearningRate").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("mirostatTau")) {
+            sparams.mirostat_tau = options.Get("mirostatTau").As<Napi::Number>().FloatValue();
+        }
+        if (options.Has("logitBias")) {
+            // get the logitBias object: { [tokenString]: number}
+            auto logitBiasValue = options.Get("logitBias").As<Napi::Object>();
+            if (logitBiasValue.IsObject()) {
+                auto logitBiasKeys = logitBiasValue.GetPropertyNames();
+                for (uint32_t i = 0; i < logitBiasKeys.Length(); i++) {
+                    auto logitBiasKey = logitBiasKeys.Get(i).As<Napi::String>().Utf8Value();
+                    auto _logitBiasValue = logitBiasValue.Get(logitBiasKey).As<Napi::Number>().FloatValue();
+
+                    const int n_tokens = -llama_tokenize(vocab, logitBiasKey.c_str(), logitBiasKey.size(), NULL, 0, true, true);
+                    std::vector<llama_token> bias_tokens(n_tokens);
+                    if (llama_tokenize(vocab, logitBiasKey.c_str(), logitBiasKey.size(), bias_tokens.data(), bias_tokens.size(), true, true) < 0) {
+                        llama_free(ctx);
+                        Napi::Error::New(info.Env(), "Failed to tokenize the logitBiasKey" + logitBiasKey).ThrowAsJavaScriptException();
+                        return info.Env().Undefined();
+                    }
+
+                    for (const auto& bias_token : bias_tokens) {
+                        sparams.logit_bias.push_back({bias_token, _logitBiasValue});
+                    }
+                }
+            }
+        }
+
+        if (options.Has("grammar")) {
+            auto grammar = options.Get("grammar").As<Napi::String>().Utf8Value();
+            if (grammar.length() > 0) {
+                sparams.grammar = grammar;
+            }
+        }
+        if (options.Has("jsonSchema")) {
+            auto jsonSchema = options.Get("jsonSchema").As<Napi::String>().Utf8Value();
+            if (jsonSchema.length() > 0) {
+                sparams.grammar = json_schema_to_grammar(json::parse(jsonSchema));
+            }
+        }
+    }
+
+    auto * smpl = common_sampler_init(model, sparams);
+    if (!smpl) {
+        llama_free(ctx);
+        Napi::Error::New(info.Env(), "Failed to initialize sampling subsystem").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+
+    int32_t n_predict = context_params.n_ctx - n_prompt;
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
+    int n_decode = 0;
+    llama_token new_token_id;
+    std::string _result = "";
+    for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + n_predict; ) {
+        // evaluate the current batch with the transformer model
+        if (llama_decode(ctx, batch)) {
+            Napi::Error::New(info.Env(), "Failed to Decode token").ThrowAsJavaScriptException();
+            return info.Env().Undefined();
+        }
+
+        n_pos += batch.n_tokens;
+
+        // sample the next token
+        {
+            new_token_id = common_sampler_sample(smpl, ctx, -1);
+            common_sampler_accept(smpl, new_token_id, /* accept_grammar= */ true);
+
+            // is it an end of generation?
+            if (llama_vocab_is_eog(vocab, new_token_id)) {
+                break;
+            }
+
+            char buf[128];
+            int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
+            if (n < 0) {
+                Napi::Error::New(info.Env(), "Failed to convert token to piece").ThrowAsJavaScriptException();
+                return info.Env().Undefined();
+            }
+            std::string s(buf, n);
+            printf("%s", s.c_str());
+            fflush(stdout);
+            _result += s;
+
+            // prepare the next batch with the sampled token
+            batch = llama_batch_get_one(&new_token_id, 1);
+
+            n_decode += 1;
+        }
+    }
+    common_sampler_free(smpl);
+    llama_free(ctx);
+
+    return Napi::String::New(info.Env(), _result);
+}
+
 Napi::Value AddonModel::Tokenize(const Napi::CallbackInfo& info) {
     if (disposed) {
         Napi::Error::New(info.Env(), "Model is disposed").ThrowAsJavaScriptException();
@@ -657,6 +921,7 @@ void AddonModel::init(Napi::Object exports) {
                 InstanceMethod("init", &AddonModel::Init),
                 InstanceMethod("loadLora", &AddonModel::LoadLora),
                 InstanceMethod("abortActiveModelLoad", &AddonModel::AbortActiveModelLoad),
+                InstanceMethod("completionSync", &AddonModel::CompletionSync),
                 InstanceMethod("tokenize", &AddonModel::Tokenize),
                 InstanceMethod("detokenize", &AddonModel::Detokenize),
                 InstanceMethod("getTrainContextSize", &AddonModel::GetTrainContextSize),

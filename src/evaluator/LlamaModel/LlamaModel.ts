@@ -244,6 +244,7 @@ export class LlamaModel {
         this._removeLoraUsage = this._removeLoraUsage.bind(this);
 
         this.tokenize = this.tokenize.bind(this);
+        this.completionSync = this.completionSync.bind(this);
         this.detokenize = this.detokenize.bind(this);
         this.isSpecialToken = this.isSpecialToken.bind(this);
         this.isEogToken = this.isEogToken.bind(this);
@@ -315,6 +316,12 @@ export class LlamaModel {
 
     public get defaultContextFlashAttention() {
         return this._defaultContextFlashAttention;
+    }
+
+    public completionSync(prompt: string, options?: any): string {
+        this._ensureNotDisposed();
+        const result = this._model.completionSync(prompt, options);
+        return result;
     }
 
     /**

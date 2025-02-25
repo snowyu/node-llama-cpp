@@ -92,6 +92,7 @@ export type AddonModel = {
     loadLora(lora: AddonModelLora): Promise<void>,
     abortActiveModelLoad(): void,
     dispose(): Promise<void>,
+    completionSync(prompt: string, options?: any): string,
     tokenize(text: string, specialTokens: boolean): Uint32Array,
     detokenize(tokens: Uint32Array, specialTokens?: boolean): string,
     getTrainContextSize(): number,
