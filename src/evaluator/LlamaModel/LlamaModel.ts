@@ -283,6 +283,10 @@ export class LlamaModel {
         return this._filename;
     }
 
+    public get modelPath() {
+        return this._modelPath;
+    }
+
     public get fileInfo(): GgufFileInfo {
         return this._fileInfo;
     }
