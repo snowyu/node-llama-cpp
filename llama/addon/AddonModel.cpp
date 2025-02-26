@@ -423,6 +423,64 @@ Napi::Value AddonModel::Dispose(const Napi::CallbackInfo& info) {
     }
 }
 
+Napi::Object SamplingParamsToNapiObject(const Napi::Env& env, const llama_vocab *vocab, const common_params_sampling& sparams) {
+    Napi::Object obj = Napi::Object::New(env);
+
+    obj.Set("seed", Napi::Number::New(env, sparams.seed));
+    obj.Set("temp", Napi::Number::New(env, sparams.temp));
+    obj.Set("ignore_eos", Napi::Number::New(env, sparams.ignore_eos));
+    obj.Set("top_k", Napi::Number::New(env, sparams.top_k));
+    obj.Set("top_p", Napi::Number::New(env, sparams.top_p));
+    obj.Set("min_p", Napi::Number::New(env, sparams.min_p));
+    obj.Set("top_n_sigma", Napi::Number::New(env, sparams.top_n_sigma));
+    obj.Set("xtc_probability", Napi::Number::New(env, sparams.xtc_probability));
+    obj.Set("xtc_threshold", Napi::Number::New(env, sparams.xtc_threshold));
+    obj.Set("typ_p", Napi::Number::New(env, sparams.typ_p));
+    obj.Set("penalty_last_n", Napi::Number::New(env, sparams.penalty_last_n));
+    obj.Set("penalty_repeat", Napi::Number::New(env, sparams.penalty_repeat));
+    obj.Set("penalty_present", Napi::Number::New(env, sparams.penalty_present));
+    obj.Set("penalty_freq", Napi::Number::New(env, sparams.penalty_freq));
+    obj.Set("dry_multiplier", Napi::Number::New(env, sparams.dry_multiplier));
+    obj.Set("dry_base", Napi::Number::New(env, sparams.dry_base));
+    obj.Set("dry_allowed_length", Napi::Number::New(env, sparams.dry_allowed_length));
+    obj.Set("dry_penalty_last_n", Napi::Number::New(env, sparams.dry_penalty_last_n));
+
+    Napi::Array drySequenceBreakersArray = Napi::Array::New(env, sparams.dry_sequence_breakers.size());
+    for (size_t i = 0; i < sparams.dry_sequence_breakers.size(); ++i) {
+        drySequenceBreakersArray.Set(i, Napi::String::New(env, sparams.dry_sequence_breakers[i]));
+    }
+    obj.Set("dry_sequence_breakers", drySequenceBreakersArray);
+
+    obj.Set("dynatemp_range", Napi::Number::New(env, sparams.dynatemp_range));
+    obj.Set("dynatemp_exponent", Napi::Number::New(env, sparams.dynatemp_exponent));
+    obj.Set("mirostat", Napi::Number::New(env, sparams.mirostat));
+    obj.Set("mirostat_eta", Napi::Number::New(env, sparams.mirostat_eta));
+    obj.Set("mirostat_tau", Napi::Number::New(env, sparams.mirostat_tau));
+
+    if (sparams.logit_bias.size() > 0) {
+        Napi::Array logitBiasArray = Napi::Array::New(env, sparams.logit_bias.size());
+        for (size_t i = 0; i < sparams.logit_bias.size(); ++i) {
+            Napi::Object logitBiasEntry = Napi::Object::New(env);
+
+            llama_token token = sparams.logit_bias[i].token;
+            float bias = sparams.logit_bias[i].bias;
+
+            std::string tokenStr = common_token_to_piece(vocab, token);
+
+            logitBiasEntry.Set("token", Napi::String::New(env, tokenStr));
+            logitBiasEntry.Set("bias", Napi::Number::New(env, bias));
+            logitBiasArray.Set(i, logitBiasEntry);
+        }
+        obj.Set("logit_bias", logitBiasArray);
+    }
+
+    if (sparams.grammar.length() > 0) {
+        obj.Set("grammar", Napi::String::New(env, sparams.grammar));
+    }
+
+    return obj;
+}
+
 Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
     if (disposed) {
         Napi::Error::New(info.Env(), "Model is disposed").ThrowAsJavaScriptException();
@@ -444,6 +502,9 @@ Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
         Napi::Error::New(info.Env(), "Failed to tokenize the prompt").ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
+    const bool add_bos_token = llama_vocab_get_add_bos(vocab);
+    const bool has_eos_token = llama_vocab_eos(vocab) != LLAMA_TOKEN_NULL;
+
     Napi::Object options;
     if (info.Length() > 1 && info[1].IsObject()) {
         options = info[1].As<Napi::Object>();
@@ -501,7 +562,14 @@ Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
             sparams.temp = options.Get("temperature").As<Napi::Number>().FloatValue();
         }
         if (options.Has("ignoreEOS")) {
-            sparams.ignore_eos = options.Get("ignoreEOS").As<Napi::Number>().FloatValue();
+            sparams.ignore_eos = options.Get("ignoreEOS").As<Napi::Boolean>().Value() && has_eos_token;
+            if (sparams.ignore_eos) {
+                for (llama_token i = 0; i < llama_vocab_n_tokens(vocab); i++) {
+                    if (llama_vocab_is_eog(vocab, i)) {
+                        sparams.logit_bias.push_back({i, -INFINITY});
+                    }
+                }
+            }
         }
 
         if (options.Has("topK")) {
@@ -592,23 +660,40 @@ Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
         }
         if (options.Has("logitBias")) {
             // get the logitBias object: { [tokenString]: number}
-            auto logitBiasValue = options.Get("logitBias").As<Napi::Object>();
-            if (logitBiasValue.IsObject()) {
-                auto logitBiasKeys = logitBiasValue.GetPropertyNames();
-                for (uint32_t i = 0; i < logitBiasKeys.Length(); i++) {
-                    auto logitBiasKey = logitBiasKeys.Get(i).As<Napi::String>().Utf8Value();
-                    auto _logitBiasValue = logitBiasValue.Get(logitBiasKey).As<Napi::Number>().FloatValue();
+            auto logitBiasObj = options.Get("logitBias").As<Napi::Object>();
+            if (logitBiasObj.IsArray()) {
+                auto logitBiasArray = logitBiasObj.As<Napi::Array>();
+                for (uint32_t i = 0; i < logitBiasArray.Length(); i++) {
+                    auto logitBiasEntry = logitBiasArray.Get(i).As<Napi::Object>();
+                    if (logitBiasEntry.IsObject()) {
+                        if (logitBiasEntry.Has("token") && logitBiasEntry.Has("bias")) {
+                            auto tokenString = logitBiasEntry.Get("token").As<Napi::String>().Utf8Value();
+                            auto logitBiasValue = logitBiasEntry.Get("bias").As<Napi::Number>().FloatValue();
+                            const int n_tokens = -llama_tokenize(vocab, tokenString.c_str(), tokenString.size(), NULL, 0, true, true);
+                            std::vector<llama_token> bias_tokens = common_tokenize(ctx, tokenString, true, true);
 
-                    const int n_tokens = -llama_tokenize(vocab, logitBiasKey.c_str(), logitBiasKey.size(), NULL, 0, true, true);
+                            for (const auto& bias_token : bias_tokens) {
+                                sparams.logit_bias.push_back({bias_token, logitBiasValue});
+                            }
+                        }
+                    }
+                }
+            } else if (logitBiasObj.IsObject()) {
+                auto logitBiasKeys = logitBiasObj.GetPropertyNames();
+                for (uint32_t i = 0; i < logitBiasKeys.Length(); i++) {
+                    auto tokenString = logitBiasKeys.Get(i).As<Napi::String>().Utf8Value();
+                    auto logitBiasValue = logitBiasObj.Get(tokenString).As<Napi::Number>().FloatValue();
+
+                    const int n_tokens = -llama_tokenize(vocab, tokenString.c_str(), tokenString.size(), NULL, 0, true, true);
                     std::vector<llama_token> bias_tokens(n_tokens);
-                    if (llama_tokenize(vocab, logitBiasKey.c_str(), logitBiasKey.size(), bias_tokens.data(), bias_tokens.size(), true, true) < 0) {
+                    if (llama_tokenize(vocab, tokenString.c_str(), tokenString.size(), bias_tokens.data(), bias_tokens.size(), true, true) < 0) {
                         llama_free(ctx);
-                        Napi::Error::New(info.Env(), "Failed to tokenize the logitBiasKey" + logitBiasKey).ThrowAsJavaScriptException();
+                        Napi::Error::New(info.Env(), "Failed to tokenize the logitBiasKey" + tokenString).ThrowAsJavaScriptException();
                         return info.Env().Undefined();
                     }
 
                     for (const auto& bias_token : bias_tokens) {
-                        sparams.logit_bias.push_back({bias_token, _logitBiasValue});
+                        sparams.logit_bias.push_back({bias_token, logitBiasValue});
                     }
                 }
             }
@@ -679,7 +764,11 @@ Napi::Value AddonModel::CompletionSync(const Napi::CallbackInfo& info) {
     common_sampler_free(smpl);
     llama_free(ctx);
 
-    return Napi::String::New(info.Env(), _result);
+    Napi::Object result = Napi::Object::New(info.Env());
+    result.Set("content", Napi::String::New(info.Env(), _result));
+    result.Set("params", SamplingParamsToNapiObject(info.Env(), vocab, sparams));
+
+    return result;
 }
 
 Napi::Value AddonModel::Tokenize(const Napi::CallbackInfo& info) {
