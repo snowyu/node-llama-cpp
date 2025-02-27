@@ -53,7 +53,7 @@
     "watch": "tsc --build tsconfig.json --watch --force",
     "cmake-js-llama": "cd llama && cmake-js",
     "test": "npm run test:typescript && npm run lint:eslint && npm run test:vitest",
-    "test:vitest": "vitest run ./test",
+    "test:vitest": "vitest run",
     "test:standalone": "vitest run ./test/standalone",
     "test:standalone:interactive": "vitest watch ./test/standalone",
     "test:modelDependent": "vitest run ./test/modelDependent",
