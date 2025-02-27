@@ -87,12 +87,51 @@ export type BindingModule = {
     dispose(): Promise<void>
 };
 
+export interface AddonModelCompletionParams {
+    seed: number,
+    temperature: number,
+    ignoreEOS: boolean,
+    topK: number,
+    topP: number,
+    minP: number,
+    topNSigma: number,
+    xtcProbability: number,
+    xtcThreshold: number,
+    typicalP: number,
+    repeatLastN: number,
+    repeatPenalty: number,
+    presencePenalty: number,
+    frequencyPenalty: number,
+    dryMultiplier: number,
+    dryBase: number,
+    dryAllowedLength: number,
+    dryPenaltyLastN: number,
+    drySequenceBreaker: string[],
+    dynaTemperatureRange: number,
+    dynaTemperatureExponent: number,
+    mirostat: number,
+    mirostatLearningRate: number,
+    mirostatTau: number,
+    logitBias: Array<{token: string, bias: number}>,
+    grammar: string,
+    [name: string]: any,
+}
+
+export interface AddonModelCompletionResult {
+    content: string,
+    params: AddonModelCompletionParams,
+}
+
+export type Optional<T> = {
+    [P in keyof T]?: T[P];
+}
+
 export type AddonModel = {
     init(): Promise<boolean>,
     loadLora(lora: AddonModelLora): Promise<void>,
     abortActiveModelLoad(): void,
     dispose(): Promise<void>,
-    completionSync(prompt: string, options?: any): string,
+    completionSync(prompt: string, options?: Optional<AddonModelCompletionParams>): AddonModelCompletionResult,
     tokenize(text: string, specialTokens: boolean): Uint32Array,
     detokenize(tokens: Uint32Array, specialTokens?: boolean): string,
     detokenizePiece(token: number): string,

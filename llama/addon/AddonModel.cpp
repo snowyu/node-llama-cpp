@@ -427,35 +427,35 @@ Napi::Object SamplingParamsToNapiObject(const Napi::Env& env, const llama_vocab 
     Napi::Object obj = Napi::Object::New(env);
 
     obj.Set("seed", Napi::Number::New(env, sparams.seed));
-    obj.Set("temp", Napi::Number::New(env, sparams.temp));
-    obj.Set("ignore_eos", Napi::Number::New(env, sparams.ignore_eos));
-    obj.Set("top_k", Napi::Number::New(env, sparams.top_k));
-    obj.Set("top_p", Napi::Number::New(env, sparams.top_p));
-    obj.Set("min_p", Napi::Number::New(env, sparams.min_p));
-    obj.Set("top_n_sigma", Napi::Number::New(env, sparams.top_n_sigma));
-    obj.Set("xtc_probability", Napi::Number::New(env, sparams.xtc_probability));
-    obj.Set("xtc_threshold", Napi::Number::New(env, sparams.xtc_threshold));
-    obj.Set("typ_p", Napi::Number::New(env, sparams.typ_p));
-    obj.Set("penalty_last_n", Napi::Number::New(env, sparams.penalty_last_n));
-    obj.Set("penalty_repeat", Napi::Number::New(env, sparams.penalty_repeat));
-    obj.Set("penalty_present", Napi::Number::New(env, sparams.penalty_present));
-    obj.Set("penalty_freq", Napi::Number::New(env, sparams.penalty_freq));
-    obj.Set("dry_multiplier", Napi::Number::New(env, sparams.dry_multiplier));
-    obj.Set("dry_base", Napi::Number::New(env, sparams.dry_base));
-    obj.Set("dry_allowed_length", Napi::Number::New(env, sparams.dry_allowed_length));
-    obj.Set("dry_penalty_last_n", Napi::Number::New(env, sparams.dry_penalty_last_n));
+    obj.Set("temperature", Napi::Number::New(env, sparams.temp));
+    obj.Set("ignoreEOS", Napi::Number::New(env, sparams.ignore_eos));
+    obj.Set("topK", Napi::Number::New(env, sparams.top_k));
+    obj.Set("topP", Napi::Number::New(env, sparams.top_p));
+    obj.Set("minP", Napi::Number::New(env, sparams.min_p));
+    obj.Set("topNSigma", Napi::Number::New(env, sparams.top_n_sigma));
+    obj.Set("xtcProbability", Napi::Number::New(env, sparams.xtc_probability));
+    obj.Set("xtcThreshold", Napi::Number::New(env, sparams.xtc_threshold));
+    obj.Set("typicalP", Napi::Number::New(env, sparams.typ_p));
+    obj.Set("repeatLastN", Napi::Number::New(env, sparams.penalty_last_n));
+    obj.Set("repeatPenalty", Napi::Number::New(env, sparams.penalty_repeat));
+    obj.Set("presencePenalty", Napi::Number::New(env, sparams.penalty_present));
+    obj.Set("frequencyPenalty", Napi::Number::New(env, sparams.penalty_freq));
+    obj.Set("dryMultiplier", Napi::Number::New(env, sparams.dry_multiplier));
+    obj.Set("dryBase", Napi::Number::New(env, sparams.dry_base));
+    obj.Set("dryAllowedLength", Napi::Number::New(env, sparams.dry_allowed_length));
+    obj.Set("dryPenaltyLastN", Napi::Number::New(env, sparams.dry_penalty_last_n));
 
     Napi::Array drySequenceBreakersArray = Napi::Array::New(env, sparams.dry_sequence_breakers.size());
     for (size_t i = 0; i < sparams.dry_sequence_breakers.size(); ++i) {
         drySequenceBreakersArray.Set(i, Napi::String::New(env, sparams.dry_sequence_breakers[i]));
     }
-    obj.Set("dry_sequence_breakers", drySequenceBreakersArray);
+    obj.Set("drySequenceBreaker", drySequenceBreakersArray);
 
-    obj.Set("dynatemp_range", Napi::Number::New(env, sparams.dynatemp_range));
-    obj.Set("dynatemp_exponent", Napi::Number::New(env, sparams.dynatemp_exponent));
+    obj.Set("dynaTemperatureRange", Napi::Number::New(env, sparams.dynatemp_range));
+    obj.Set("dynaTemperatureExponent", Napi::Number::New(env, sparams.dynatemp_exponent));
     obj.Set("mirostat", Napi::Number::New(env, sparams.mirostat));
-    obj.Set("mirostat_eta", Napi::Number::New(env, sparams.mirostat_eta));
-    obj.Set("mirostat_tau", Napi::Number::New(env, sparams.mirostat_tau));
+    obj.Set("mirostatLearningRate", Napi::Number::New(env, sparams.mirostat_eta));
+    obj.Set("mirostatTau", Napi::Number::New(env, sparams.mirostat_tau));
 
     if (sparams.logit_bias.size() > 0) {
         Napi::Array logitBiasArray = Napi::Array::New(env, sparams.logit_bias.size());
@@ -471,7 +471,7 @@ Napi::Object SamplingParamsToNapiObject(const Napi::Env& env, const llama_vocab 
             logitBiasEntry.Set("bias", Napi::Number::New(env, bias));
             logitBiasArray.Set(i, logitBiasEntry);
         }
-        obj.Set("logit_bias", logitBiasArray);
+        obj.Set("logitBias", logitBiasArray);
     }
 
     if (sparams.grammar.length() > 0) {

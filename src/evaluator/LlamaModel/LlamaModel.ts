@@ -3,7 +3,7 @@ import path from "path";
 import {AsyncDisposeAggregator, DisposedError, EventRelay, withLock} from "lifecycle-utils";
 import {removeNullFields} from "../../utils/removeNullFields.js";
 import {Token, Tokenizer} from "../../types.js";
-import {AddonModel, AddonModelLora, ModelTypeDescription} from "../../bindings/AddonTypes.js";
+import {AddonModel, AddonModelCompletionParams, AddonModelCompletionResult, AddonModelLora, ModelTypeDescription, Optional} from "../../bindings/AddonTypes.js";
 import {DisposalPreventionHandle, DisposeGuard} from "../../utils/DisposeGuard.js";
 import {LlamaLocks, LlamaLogLevel, LlamaVocabularyType, LlamaVocabularyTypeValues} from "../../bindings/types.js";
 import {GgufFileInfo} from "../../gguf/types/GgufFileInfoTypes.js";
@@ -323,7 +323,7 @@ export class LlamaModel {
         return this._defaultContextFlashAttention;
     }
 
-    public completionSync(prompt: string, options?: any): string {
+    public completionSync(prompt: string, options?: Optional<AddonModelCompletionParams>): AddonModelCompletionResult {
         this._ensureNotDisposed();
         const result = this._model.completionSync(prompt, options);
         return result;
