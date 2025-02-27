@@ -38,6 +38,7 @@ class AddonModel : public Napi::ObjectWrap<AddonModel> {
         Napi::Value CompletionSync(const Napi::CallbackInfo& info);
         Napi::Value Tokenize(const Napi::CallbackInfo& info);
         Napi::Value Detokenize(const Napi::CallbackInfo& info);
+        Napi::Value DetokenizePiece(const Napi::CallbackInfo& info);
         Napi::Value GetTrainContextSize(const Napi::CallbackInfo& info);
         Napi::Value GetEmbeddingVectorSize(const Napi::CallbackInfo& info);
         Napi::Value GetTotalSize(const Napi::CallbackInfo& info);

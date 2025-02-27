@@ -246,6 +246,7 @@ export class LlamaModel {
         this.tokenize = this.tokenize.bind(this);
         this.completionSync = this.completionSync.bind(this);
         this.detokenize = this.detokenize.bind(this);
+        this.detokenizePiece = this.detokenizePiece.bind(this);
         this.isSpecialToken = this.isSpecialToken.bind(this);
         this.isEogToken = this.isEogToken.bind(this);
 
@@ -472,6 +473,13 @@ export class LlamaModel {
             return text.slice(addedTokensText.length);
 
         return this._model.detokenize(Uint32Array.from(tokens), Boolean(specialTokens));
+    }
+
+    public detokenizePiece(token: Token): string {
+        this._ensureNotDisposed();
+
+        const text = this._model.detokenizePiece(token);
+        return text;
     }
 
     public getTokenAttributes(token: Token): TokenAttributes {

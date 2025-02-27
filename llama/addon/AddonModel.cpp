@@ -815,6 +815,16 @@ Napi::Value AddonModel::Detokenize(const Napi::CallbackInfo& info) {
     return Napi::String::New(info.Env(), result);
 }
 
+Napi::Value AddonModel::DetokenizePiece(const Napi::CallbackInfo& info) {
+    if (disposed) {
+        Napi::Error::New(info.Env(), "Model is disposed").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+    auto token = info[0].As<Napi::Number>().Uint32Value();
+    auto result = common_token_to_piece(vocab, token);
+    return Napi::String::New(info.Env(), result);
+}
+
 Napi::Value AddonModel::GetTrainContextSize(const Napi::CallbackInfo& info) {
     if (disposed) {
         Napi::Error::New(info.Env(), "Model is disposed").ThrowAsJavaScriptException();
@@ -1013,6 +1023,7 @@ void AddonModel::init(Napi::Object exports) {
                 InstanceMethod("completionSync", &AddonModel::CompletionSync),
                 InstanceMethod("tokenize", &AddonModel::Tokenize),
                 InstanceMethod("detokenize", &AddonModel::Detokenize),
+                InstanceMethod("detokenizePiece", &AddonModel::DetokenizePiece),
                 InstanceMethod("getTrainContextSize", &AddonModel::GetTrainContextSize),
                 InstanceMethod("getEmbeddingVectorSize", &AddonModel::GetEmbeddingVectorSize),
                 InstanceMethod("getTotalSize", &AddonModel::GetTotalSize),
