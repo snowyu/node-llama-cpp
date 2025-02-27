@@ -36,7 +36,6 @@ tell me 2+2 result directly, no other words.<end_of_turn>
 <start_of_turn>Llama
 `;
         const result: any = model.completionSync(prompt, {temperature: 1});
-        console.log(result);
         expect(result).toHaveProperty('content');
         expect(result.content).toMatch(/4/);
         expect(result).toHaveProperty('params');
