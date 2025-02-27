@@ -148,7 +148,8 @@ export default tseslint.config({
             ]
         }],
         "@stylistic/no-trailing-spaces": ["off"],
-        "@stylistic/no-multi-spaces": ["warn"]
+        "@stylistic/no-multi-spaces": ["warn"],
+        "@stylistic/member-delimiter-style": "off",
     }
 }, {
     files: ["**/**.{,c,m}ts"],
