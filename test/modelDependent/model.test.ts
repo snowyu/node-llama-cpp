@@ -1,15 +1,7 @@
 import {describe, expect, it} from "vitest";
-// import {getLlama, Llama} from "../../src/index.js";
 import {getModelFile} from "../utils/modelFiles.js";
 import {getTestLlama} from "../utils/getTestLlama.js";
 import {GbnfJsonSchema, LlamaCompletion} from "../../src/index.js";
-
-// const llama = await getLlama();
-// const modelPath = '/home/riceball/.local/share/ai/brain/bartowski-gemma-2-2b-it.Q4_K_M.gguf'
-// const model = await llama.loadModel({
-//     modelPath,
-//     gpuLayers: 0,
-// });
 
 describe("original completionSync vs LlamaCompletion", {timeout: 1000 * 60}, async () => {
     const modelPath = await getModelFile("qwen2.5-1.5b-instruct.Q4_0.gguf");
@@ -19,7 +11,7 @@ describe("original completionSync vs LlamaCompletion", {timeout: 1000 * 60}, asy
         modelPath,
     });
 
-    it.only("should same result", async () => {
+    it("should same result", async () => {
         const prompt = "<|im_start|>system\nAccurately Extract THE INPUT CONTENT by the user as a JSON object according to THE JSON FIELDS in json schema format specified by the user:<|im_end|>\n<|im_start|>user\n\nTHE JSON FIELDS IN JSON SCHEMA FORMAT:\n* (array)\n * name: (optional) (string) The language name\n * value: (optional) (string) The ISO 639-1 language code\n---\n\nTHE INPUT CONTENT:\nhere are the language list:\n- English\n- Spanish\n- French\n- German\n- Italian\n- Portuguese\n- Chinese (Simplified and Traditional)\n- Japanese\n- Korean\n- Russian\n- Arabic\n- Dutch\n- Swedish\n- Danish\n- Norwegian\n- Greek\n- Turkish\n- Hebrew\n- Indonesian\n- Malay\n- Thai\n- Vietnamese\n- Hindi\n- Urdu\n- Tamil\n- Gujarati\n- Bengali\n- Malayalam\n- Tagalog\n---<|im_end|>\n<|im_start|>assistant\n";
         const schema: GbnfJsonSchema = {
             type: 'array',
