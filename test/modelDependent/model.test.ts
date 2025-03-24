@@ -2,6 +2,7 @@ import {describe, expect, it} from "vitest";
 // import {getLlama, Llama} from "../../src/index.js";
 import {getModelFile} from "../utils/modelFiles.js";
 import {getTestLlama} from "../utils/getTestLlama.js";
+import {GbnfJsonSchema, LlamaCompletion} from "../../src/index.js";
 
 // const llama = await getLlama();
 // const modelPath = '/home/riceball/.local/share/ai/brain/bartowski-gemma-2-2b-it.Q4_K_M.gguf'
@@ -10,6 +11,60 @@ import {getTestLlama} from "../utils/getTestLlama.js";
 //     gpuLayers: 0,
 // });
 
+describe("original completionSync vs LlamaCompletion", {timeout: 1000 * 60}, async () => {
+    const modelPath = await getModelFile("qwen2.5-1.5b-instruct.Q4_0.gguf");
+    const llama = await getTestLlama();
+
+    const model = await llama.loadModel({
+        modelPath,
+    });
+
+    it.only("should same result", async () => {
+        const prompt = "<|im_start|>system\nAccurately Extract THE INPUT CONTENT by the user as a JSON object according to THE JSON FIELDS in json schema format specified by the user:<|im_end|>\n<|im_start|>user\n\nTHE JSON FIELDS IN JSON SCHEMA FORMAT:\n* (array)\n * name: (optional) (string) The language name\n * value: (optional) (string) The ISO 639-1 language code\n---\n\nTHE INPUT CONTENT:\nhere are the language list:\n- English\n- Spanish\n- French\n- German\n- Italian\n- Portuguese\n- Chinese (Simplified and Traditional)\n- Japanese\n- Korean\n- Russian\n- Arabic\n- Dutch\n- Swedish\n- Danish\n- Norwegian\n- Greek\n- Turkish\n- Hebrew\n- Indonesian\n- Malay\n- Thai\n- Vietnamese\n- Hindi\n- Urdu\n- Tamil\n- Gujarati\n- Bengali\n- Malayalam\n- Tagalog\n---<|im_end|>\n<|im_start|>assistant\n";
+        const schema: GbnfJsonSchema = {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    name: {
+                        type: 'string'
+                    },
+                    value: {
+                        type: 'string'
+                    }
+                }
+            }
+        }
+        const jsonSchema = JSON.stringify(schema)
+        const llamaCppRes: any = model.completionSync(prompt, {temperature: 0, topP: 0.9, jsonSchema});
+        expect(llamaCppRes).toHaveProperty('content');
+        const params = llamaCppRes.params;
+        const llamaCppResult = llamaCppRes.content;
+
+        const context = await model.createContext({
+            contextSize: 4096
+        });
+        const contextSequence = context.getSequence();
+        const completion = new LlamaCompletion({
+            contextSequence
+        });
+
+        let res = await completion.generateCompletion(prompt, {
+            temperature: 0,
+            topP: 0.9,
+            seed: params.seed,
+            grammar: await llama.createGrammarForJsonSchema(schema),
+        });
+        expect(res).toBe(llamaCppResult);
+        // contextSequence.clearHistory();
+        // res = await completion.generateCompletion(prompt, {
+        //     temperature: 0,
+        //     topP: 0.9,
+        //     // seed: params.seed,
+        //     grammar: await llama.createGrammarForJsonSchema(schema as any),
+        // });
+    })
+})
 
 describe("LlamaModel", async () => {
     const modelPath = await getModelFile("gemma-2-2b-it.Q4_K_M.gguf");
