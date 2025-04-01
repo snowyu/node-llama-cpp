@@ -149,7 +149,7 @@ export default tseslint.config({
         }],
         "@stylistic/no-trailing-spaces": ["off"],
         "@stylistic/no-multi-spaces": ["warn"],
-        "@stylistic/member-delimiter-style": "off",
+        "@stylistic/generator-star-spacing": ["off"]
     }
 }, {
     files: ["**/**.{,c,m}ts"],

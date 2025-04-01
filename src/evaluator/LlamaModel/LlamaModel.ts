@@ -276,6 +276,10 @@ export class LlamaModel {
         return this._disposedState.disposed;
     }
 
+    public get llama() {
+        return this._llama;
+    }
+
     public get tokens() {
         return this._tokens;
     }
