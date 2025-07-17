@@ -1,5 +1,7 @@
 #include <thread>
 #include <sstream>
+#include <cmath>
+#include <nlohmann/json.hpp>
 #include "addonGlobals.h"
 #include "globals/addonLog.h"
 #include "globals/addonProgress.h"
