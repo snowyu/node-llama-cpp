@@ -61,7 +61,7 @@ export async function compileLlamaCpp(buildOptions: BuildOptions, compileOptions
         platform === "win" &&
         (
             buildOptions.gpu === false ||
-            (buildOptions.gpu === "vulkan" && buildOptions.arch === "arm64") // Vulkan can't be compiled on Windows x64 with LLVM ATM
+            buildOptions.gpu === "vulkan"
         ) &&
         !ignoreWorkarounds.includes("avoidWindowsLlvm") &&
         !buildOptions.customCmakeOptions.has("CMAKE_TOOLCHAIN_FILE") &&
@@ -105,6 +105,7 @@ export async function compileLlamaCpp(buildOptions: BuildOptions, compileOptions
                 cmakeCustomOptions.set("CMAKE_CONFIGURATION_TYPES", buildConfigType);
                 cmakeCustomOptions.set("NLC_CURRENT_PLATFORM", platform + "-" + process.arch);
                 cmakeCustomOptions.set("NLC_TARGET_PLATFORM", buildOptions.platform + "-" + buildOptions.arch);
+                cmakeCustomOptions.set("NLC_VARIANT", buildFolderName.binVariant);
 
                 if (toolchainFile != null && !cmakeCustomOptions.has("CMAKE_TOOLCHAIN_FILE"))
                     cmakeToolchainOptions.set("CMAKE_TOOLCHAIN_FILE", toolchainFile);
@@ -244,19 +245,26 @@ export async function compileLlamaCpp(buildOptions: BuildOptions, compileOptions
         else if (buildOptions.gpu === "cuda") {
             if (!ignoreWorkarounds.includes("cudaArchitecture") && (platform === "win" || platform === "linux") &&
                 err instanceof SpawnError && (
-                err.combinedStd.toLowerCase().includes("Failed to detect a default CUDA architecture".toLowerCase()) || (
+                err.combinedStd.toLowerCase().includes("CUDA Toolkit not found".toLowerCase()) ||
+                err.combinedStd.toLowerCase().includes("Failed to detect a default CUDA architecture".toLowerCase()) ||
+                err.combinedStd.toLowerCase().includes("CMAKE_CUDA_COMPILER-NOTFOUND".toLowerCase()) || (
                     err.combinedStd.toLowerCase().includes(
                         "Tell CMake where to find the compiler by setting either the environment".toLowerCase()
                     ) &&
                     err.combinedStd.toLowerCase().includes(
                         'variable "CUDACXX" or the CMake cache entry CMAKE_CUDA_COMPILER to the full'.toLowerCase()
                     )
+                ) || (
+                    err.combinedStd.toLowerCase().includes("The CUDA compiler".toLowerCase()) &&
+                    err.combinedStd.toLowerCase().includes("is not able to compile a simple test program".toLowerCase()) &&
+                    err.combinedStd.toLowerCase().includes("nvcc fatal".toLowerCase())
                 )
             )) {
-                for (const nvccPath of await getCudaNvccPaths()) {
+                for (const {nvccPath, cudaHomePath} of await getCudaNvccPaths()) {
                     if (buildOptions.progressLogs)
                         console.info(
-                            getConsoleLogPrefix(true) + `Trying to compile again with "CUDACXX=${nvccPath}" environment variable`
+                            getConsoleLogPrefix(true) +
+                            `Trying to compile again with "CUDACXX=${nvccPath}" and "CUDA_PATH=${cudaHomePath}" environment variables`
                         );
 
                     try {
@@ -264,7 +272,8 @@ export async function compileLlamaCpp(buildOptions: BuildOptions, compileOptions
                             ...compileOptions,
                             envVars: {
                                 ...envVars,
-                                CUDACXX: nvccPath
+                                CUDACXX: nvccPath,
+                                "CUDA_PATH": cudaHomePath
                             },
                             ignoreWorkarounds: [...ignoreWorkarounds, "cudaArchitecture"]
                         });
@@ -379,21 +388,34 @@ export async function getPrebuiltBinaryPath(buildOptions: BuildOptions, folderNa
         return {
             binaryPath,
             folderName,
-            folderPath: localPrebuiltBinaryDirectoryPath
+            folderPath: localPrebuiltBinaryDirectoryPath,
+            extBackendsPath: undefined
         };
 
     const packagePrebuiltBinariesDirectoryPath = await getPrebuiltBinariesPackageDirectoryForBuildOptions(buildOptions);
     if (packagePrebuiltBinariesDirectoryPath == null)
         return null;
 
-    const packagePrebuiltBinaryDirectoryPath = path.join(packagePrebuiltBinariesDirectoryPath, folderName);
+    const prebuiltBinariesDirPath = typeof packagePrebuiltBinariesDirectoryPath === "string"
+        ? packagePrebuiltBinariesDirectoryPath
+        : packagePrebuiltBinariesDirectoryPath.binsDir;
+    const prebuiltBinariesExtDirPath = typeof packagePrebuiltBinariesDirectoryPath === "string"
+        ? undefined
+        : packagePrebuiltBinariesDirectoryPath.extBinsDir;
+
+    const packagePrebuiltBinaryDirectoryPath = path.join(prebuiltBinariesDirPath, folderName);
+    const extPackagePrebuiltBinaryDirectoryPath = prebuiltBinariesExtDirPath == null
+        ? undefined
+        : path.join(prebuiltBinariesExtDirPath, folderName);
+
     const binaryPathFromPackage = await resolvePrebuiltBinaryPath(packagePrebuiltBinaryDirectoryPath);
 
     if (binaryPathFromPackage != null)
         return {
             binaryPath: binaryPathFromPackage,
             folderName,
-            folderPath: packagePrebuiltBinaryDirectoryPath
+            folderPath: packagePrebuiltBinaryDirectoryPath,
+            extBackendsPath: extPackagePrebuiltBinaryDirectoryPath
         };
 
     return null;
@@ -514,6 +536,29 @@ function getPrebuiltBinariesPackageDirectoryForBuildOptions(buildOptions: BuildO
         }
     }
 
+    async function getBinariesPathFromModulesWithExtModule(
+        moduleImport: () => Promise<{getBinsDir(): {binsDir: string, packageVersion: string}}>,
+        extModuleImport: () => Promise<{getBinsDir(): {binsDir: string, packageVersion: string}}>
+    ) {
+        const [
+            moduleBinsDir,
+            extModuleBinsDir
+        ] = await Promise.all([
+            getBinariesPathFromModules(moduleImport),
+            getBinariesPathFromModules(extModuleImport)
+        ]);
+
+        if (moduleBinsDir == null)
+            return null;
+        else if (extModuleBinsDir == null)
+            return moduleBinsDir;
+
+        return {
+            binsDir: moduleBinsDir,
+            extBinsDir: extModuleBinsDir
+        };
+    }
+
     /* eslint-disable import/no-unresolved */
     if (buildOptions.platform === "mac") {
         if (buildOptions.arch === "arm64" && buildOptions.gpu === "metal")
@@ -525,8 +570,12 @@ function getPrebuiltBinariesPackageDirectoryForBuildOptions(buildOptions: BuildO
     } else if (buildOptions.platform === "linux") {
         if (buildOptions.arch === "x64") {
             if (buildOptions.gpu === "cuda")
-                // @ts-ignore
-                return getBinariesPathFromModules(() => import("@node-llama-cpp/linux-x64-cuda"));
+                return getBinariesPathFromModulesWithExtModule(
+                    // @ts-ignore
+                    () => import("@node-llama-cpp/linux-x64-cuda"),
+                    // @ts-ignore
+                    () => import("@node-llama-cpp/linux-x64-cuda-ext")
+                );
             else if (buildOptions.gpu === "vulkan")
                 // @ts-ignore
                 return getBinariesPathFromModules(() => import("@node-llama-cpp/linux-x64-vulkan"));
@@ -542,8 +591,12 @@ function getPrebuiltBinariesPackageDirectoryForBuildOptions(buildOptions: BuildO
     } else if (buildOptions.platform === "win") {
         if (buildOptions.arch === "x64") {
             if (buildOptions.gpu === "cuda")
-                // @ts-ignore
-                return getBinariesPathFromModules(() => import("@node-llama-cpp/win-x64-cuda"));
+                return getBinariesPathFromModulesWithExtModule(
+                    // @ts-ignore
+                    () => import("@node-llama-cpp/win-x64-cuda"),
+                    // @ts-ignore
+                    () => import("@node-llama-cpp/win-x64-cuda-ext")
+                );
             else if (buildOptions.gpu === "vulkan")
                 // @ts-ignore
                 return getBinariesPathFromModules(() => import("@node-llama-cpp/win-x64-vulkan"));
